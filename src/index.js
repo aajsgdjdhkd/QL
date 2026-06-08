@@ -1,14 +1,65 @@
-import { Hono } from 'hono';
+// 完整代码 - 复制后直接部署
+export default {
+  async fetch(request, env) {
+    const url = new URL(request.url)
+    const path = url.pathname
 
-const app = new Hono();
+    // 获取用户列表（从 KV 存储读取，如果没有则使用内存数组）
+    async function getUsers() {
+      if (env.USER_KV) {
+        const data = await env.USER_KV.get('usernames', 'json')
+        return data || []
+      }
+      return globalThis.__users || []
+    }
 
-// 存储用户名列表（使用 KV 需要另外配置，此处用内存）
-let usernames = [];
+    async function setUsers(users) {
+      if (env.USER_KV) {
+        await env.USER_KV.put('usernames', JSON.stringify(users))
+      } else {
+        globalThis.__users = users
+      }
+    }
 
-// HTML 模板（内嵌，无外部文件）
-const htmlTemplate = (usernamesList, errorMsg = null) => `
-<!DOCTYPE html>
-<html lang="zh-CN">
+    // API: 获取用户列表
+    if (path === '/api/users' && request.method === 'GET') {
+      const users = await getUsers()
+      return new Response(JSON.stringify(users), {
+        headers: { 'Content-Type': 'application/json' }
+      })
+    }
+
+    // API: 添加用户
+    if (path === '/api/users' && request.method === 'POST') {
+      const { username } = await request.json()
+      if (!username) {
+        return new Response('Username required', { status: 400 })
+      }
+      const users = await getUsers()
+      if (!users.includes(username)) {
+        users.push(username)
+        await setUsers(users)
+      }
+      return new Response(JSON.stringify(users), {
+        headers: { 'Content-Type': 'application/json' }
+      })
+    }
+
+    // API: 删除用户
+    if (path === '/api/users' && request.method === 'DELETE') {
+      const { username } = await request.json()
+      let users = await getUsers()
+      users = users.filter(u => u !== username)
+      await setUsers(users)
+      return new Response(JSON.stringify(users), {
+        headers: { 'Content-Type': 'application/json' }
+      })
+    }
+
+    // 首页 HTML（简约黑白风格）
+    if (path === '/') {
+      const html = `<!DOCTYPE html>
+<html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -17,208 +68,152 @@ const htmlTemplate = (usernamesList, errorMsg = null) => `
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             background: #0a0a0a;
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+            font-family: system-ui, -apple-system, sans-serif;
             color: #e6e6e6;
-            padding: 2rem 1.5rem;
+            padding: 2rem;
             min-height: 100vh;
             display: flex;
             justify-content: center;
             align-items: center;
         }
         .container {
-            max-width: 620px;
+            max-width: 600px;
             width: 100%;
-            margin: 0 auto;
-            background: rgba(18, 18, 22, 0.85);
-            backdrop-filter: blur(2px);
+            background: rgba(18, 18, 22, 0.9);
             border-radius: 2rem;
-            padding: 1.8rem 1.8rem 2.2rem;
-            box-shadow: 0 20px 35px -12px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.03);
+            padding: 2rem;
+            box-shadow: 0 20px 35px -12px rgba(0,0,0,0.5);
         }
-        .brand { text-align: center; margin-bottom: 2rem; }
-        .brand h1 {
-            font-size: 2.1rem;
-            font-weight: 550;
-            letter-spacing: -0.5px;
-            background: linear-gradient(135deg, #f0f0f0 0%, #b0b0b0 100%);
-            background-clip: text;
-            -webkit-background-clip: text;
-            color: transparent;
-        }
-        .brand .badge {
-            display: inline-block;
-            margin-top: 0.5rem;
-            font-size: 0.7rem;
-            background: #1e1e24;
-            padding: 0.2rem 0.8rem;
-            border-radius: 40px;
-            color: #aaa;
-            border: 0.5px solid #2c2c34;
-        }
+        h1 { text-align: center; font-size: 2rem; margin-bottom: 1rem; }
+        .sub { text-align: center; color: #888; margin-bottom: 2rem; font-size: 0.8rem; }
         .info-card {
-            background: #111114;
-            border-radius: 1.4rem;
-            padding: 1.2rem 1.5rem;
-            margin-bottom: 2rem;
-            border-left: 3px solid #3a3a44;
+            background: #111;
+            padding: 1rem;
+            border-radius: 1rem;
+            margin-bottom: 1.5rem;
+            border-left: 3px solid #555;
         }
-        .info-card p { font-size: 0.9rem; line-height: 1.5; color: #cbcbd5; }
-        .info-card strong { color: #e0e0e0; }
-        .add-section { margin-bottom: 2rem; }
-        .input-group { display: flex; flex-direction: column; gap: 0.8rem; }
-        .input-field {
-            width: 100%;
+        .info-card p { font-size: 0.85rem; line-height: 1.4; color: #ccc; }
+        .input-group { display: flex; gap: 0.5rem; margin-bottom: 1.5rem; }
+        .input-group input {
+            flex: 1;
+            padding: 0.8rem;
+            border-radius: 1rem;
+            border: 1px solid #333;
             background: #0c0c10;
-            border: 1px solid #28282f;
-            padding: 0.85rem 1.2rem;
-            border-radius: 1.2rem;
-            font-size: 0.95rem;
-            color: #f0f0f0;
-            outline: none;
-            font-family: monospace;
-        }
-        .input-field:focus { border-color: #5a5a70; background: #111116; }
-        .input-field::placeholder { color: #494954; }
-        .btn {
-            background: #1f1f26;
-            border: none;
-            padding: 0.85rem 1rem;
-            border-radius: 1.2rem;
-            font-weight: 500;
+            color: white;
             font-size: 0.9rem;
-            color: #ececec;
+        }
+        .input-group button {
+            padding: 0.8rem 1.5rem;
+            border-radius: 1rem;
+            border: none;
+            background: #2c2c34;
+            color: white;
             cursor: pointer;
-            transition: all 0.2s;
         }
-        .btn-primary { background: #2c2c34; color: white; }
-        .btn-primary:hover { background: #3d3d48; }
-        .list-title {
-            font-size: 0.85rem;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            margin: 1.5rem 0 1rem 0;
-            color: #888;
-        }
-        .user-list { display: flex; flex-direction: column; gap: 0.7rem; }
+        .input-group button:hover { background: #3d3d48; }
+        .user-list { margin-top: 1rem; }
         .user-card {
             background: #101014;
-            border-radius: 1.2rem;
-            padding: 0.7rem 1.2rem;
+            padding: 0.7rem 1rem;
+            margin: 0.5rem 0;
+            border-radius: 1rem;
             display: flex;
             justify-content: space-between;
             align-items: center;
             border: 1px solid #24242c;
         }
-        .user-name {
-            font-family: monospace;
-            font-size: 0.9rem;
-            font-weight: 450;
-            word-break: break-all;
-            padding-right: 0.8rem;
-        }
         .delete-btn {
             background: none;
             border: none;
+            color: #aa5555;
             font-size: 1.2rem;
             cursor: pointer;
-            color: #aa5555;
-            padding: 0 0.3rem;
-            transition: 0.1s;
-            font-family: monospace;
+            padding: 0 0.5rem;
         }
         .delete-btn:hover { color: #ff8888; }
-        .empty-msg {
-            text-align: center;
-            color: #5a5a66;
-            padding: 1.2rem;
-            font-size: 0.85rem;
-        }
-        .error-msg {
-            background: #2a1515;
-            border-left: 3px solid #aa5555;
-            padding: 0.6rem 1rem;
-            border-radius: 0.8rem;
-            margin-bottom: 1rem;
-            font-size: 0.8rem;
-            color: #dd8888;
-        }
-        footer {
-            font-size: 0.7rem;
-            text-align: center;
-            margin-top: 2rem;
-            color: #484852;
-        }
+        .empty { text-align: center; color: #666; padding: 1rem; }
+        footer { text-align: center; margin-top: 2rem; color: #555; font-size: 0.7rem; }
+        .error { color: #dd8888; font-size: 0.8rem; margin-top: 0.5rem; text-align: center; }
     </style>
 </head>
 <body>
 <div class="container">
-    <div class="brand">
-        <h1>QL Service</h1>
-        <div class="badge">credential manager</div>
-    </div>
-
+    <h1>QL Service</h1>
+    <div class="sub">credential manager</div>
+    
     <div class="info-card">
-        <p><strong>为什么要添加用户名？</strong><br>
-        此列表用于「图形界面授权」—— 添加后的用户名将获得访问特定 GUI 面板的权限。<br>
-        你可以通过此面板统一管理允许使用扩展功能的用户，删除后立即失效。</p>
+        <p><strong>为什么要添加用户名？</strong><br>此列表用于「图形界面授权」—— 添加后的用户名将获得访问特定 GUI 面板的权限。</p>
     </div>
-
-    ${errorMsg ? `<div class="error-msg">${errorMsg}</div>` : ''}
-
-    <div class="add-section">
-        <form action="/add-user" method="POST" class="input-group">
-            <input type="text" name="username" class="input-field" placeholder="输入用户名，例如：axjx_7" autocomplete="off">
-            <button type="submit" class="btn btn-primary">+ 添加用户名</button>
-        </form>
+    
+    <div class="input-group">
+        <input type="text" id="usernameInput" placeholder="输入用户名，例如：axjx_7">
+        <button id="addBtn">+ 添加</button>
     </div>
-
-    <div class="list-title">已授权的用户名</div>
-    <div class="user-list">
-        ${usernamesList.length === 0 ? 
-            '<div class="empty-msg">暂无用户，请添加</div>' : 
-            usernamesList.map(username => `
-                <div class="user-card">
-                    <span class="user-name">${username}</span>
-                    <form action="/delete-user" method="POST" style="margin:0;">
-                        <input type="hidden" name="username" value="${username}">
-                        <button type="submit" class="delete-btn">✕</button>
-                    </form>
-                </div>
-            `).join('')
-        }
+    
+    <div style="margin-top: 1rem;">
+        <div style="color:#888; margin-bottom:0.5rem;">已授权的用户名</div>
+        <div id="userList" class="user-list"></div>
     </div>
     <footer>QL Service · 用户列表存储于服务端</footer>
 </div>
+
+<script>
+    async function loadUsers() {
+        const res = await fetch('/api/users');
+        const users = await res.json();
+        const container = document.getElementById('userList');
+        if (users.length === 0) {
+            container.innerHTML = '<div class="empty">暂无用户，请添加</div>';
+            return;
+        }
+        container.innerHTML = users.map(u => \`
+            <div class="user-card">
+                <span>\${escapeHtml(u)}</span>
+                <button class="delete-btn" onclick="deleteUser('\${escapeHtml(u)}')">✕</button>
+            </div>
+        \`).join('');
+    }
+    
+    function escapeHtml(str) {
+        return str.replace(/[&<>]/g, function(m) {
+            if (m === '&') return '&amp;';
+            if (m === '<') return '&lt;';
+            if (m === '>') return '&gt;';
+            return m;
+        });
+    }
+    
+    async function deleteUser(username) {
+        await fetch('/api/users', {
+            method: 'DELETE',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username })
+        });
+        loadUsers();
+    }
+    
+    document.getElementById('addBtn').onclick = async () => {
+        const input = document.getElementById('usernameInput');
+        const username = input.value.trim();
+        if (!username) return;
+        await fetch('/api/users', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ username })
+        });
+        input.value = '';
+        loadUsers();
+    };
+    
+    loadUsers();
+</script>
 </body>
-</html>
-`;
-
-// 路由
-app.get('/', (c) => {
-    return c.html(htmlTemplate(usernames, null));
-});
-
-app.post('/add-user', async (c) => {
-    const body = await c.req.parseBody();
-    const username = body.username?.toString().trim();
-    
-    if (!username) {
-        return c.html(htmlTemplate(usernames, '用户名不能为空'));
+</html>`
+      return new Response(html, { headers: { 'Content-Type': 'text/html' } })
     }
-    
-    if (usernames.includes(username)) {
-        return c.html(htmlTemplate(usernames, '用户名已存在'));
-    }
-    
-    usernames.push(username);
-    return c.redirect('/');
-});
 
-app.post('/delete-user', async (c) => {
-    const body = await c.req.parseBody();
-    const username = body.username?.toString().trim();
-    usernames = usernames.filter(u => u !== username);
-    return c.redirect('/');
-});
-
-export default app;
+    return new Response('Not Found', { status: 404 })
+  }
+}
